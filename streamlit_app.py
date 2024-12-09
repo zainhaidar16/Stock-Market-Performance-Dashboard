@@ -1,315 +1,138 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
-import plotly.graph_objs as go
-import plotly.express as px
 from datetime import datetime, timedelta
-import ta
+import numpy as np
 
-class StockMarketDashboard:
-    def __init__(self):
-        # Set page configuration
-        st.set_page_config(page_title="Stock Market Performance Dashboard", 
-                            page_icon=":chart_with_upwards_trend:", 
-                            layout="wide")
-        
-        # Initialize session state for portfolio
-        if 'portfolio' not in st.session_state:
-            st.session_state.portfolio = {}
-    
-    def fetch_stock_data(self, tickers, start_date, end_date):
-        """
-        Fetch historical stock data for multiple tickers
-        
-        Args:
-            tickers (list): List of stock ticker symbols
-            start_date (datetime): Start date for data retrieval
-            end_date (datetime): End date for data retrieval
-        
-        Returns:
-            dict: Dictionary of DataFrames for each ticker
-        """
-        stock_data = {}
-        for ticker in tickers:
-            try:
-                # Fetch data with a specific interval to ensure proper data retrieval
-                df = yf.download(ticker, start=start_date, end=end_date, progress=False)
-                
-                # Ensure Close column is 1-dimensional
-                if isinstance(df['Close'], pd.DataFrame):
-                    df['Close'] = df['Close'].squeeze()
-                
-                # Calculate technical indicators
-                rsi_indicator = ta.momentum.RSIIndicator(df['Close'])
-                macd_indicator = ta.trend.MACD(df['Close'])
-                bollinger = ta.volatility.BollingerBands(df['Close'])
-                
-                df['RSI'] = rsi_indicator.rsi()
-                df['MACD'] = macd_indicator.macd()
-                df['Bollinger_High'] = bollinger.bollinger_hband()
-                df['Bollinger_Low'] = bollinger.bollinger_lband()
-                
-                stock_data[ticker] = df
-            except Exception as e:
-                st.error(f"Error fetching data for {ticker}: {e}")
-        
-        return stock_data
-    
-    def plot_stock_performance(self, stock_data):
-        """
-        Create interactive stock performance comparison plot
-        
-        Args:
-            stock_data (dict): Dictionary of stock DataFrames
-        """
-        st.subheader("Stock Performance Comparison")
-        
-        # Prepare normalized data for comparison
-        normalized_data = {}
-        for ticker, df in stock_data.items():
-            normalized_df = df['Close'] / df['Close'].iloc[0] * 100
-            normalized_data[ticker] = normalized_df
-        
-        # Create comparison DataFrame
-        comparison_df = pd.DataFrame(normalized_data)
-        
-        # Plotly interactive line chart
-        fig = go.Figure()
-        for ticker in comparison_df.columns:
-            fig.add_trace(go.Scatter(
-                x=comparison_df.index, 
-                y=comparison_df[ticker], 
-                mode='lines', 
-                name=ticker
-            ))
-        
-        fig.update_layout(
-            title='Normalized Stock Performance',
-            xaxis_title='Date',
-            yaxis_title='Normalized Price (Base 100)',
-            hovermode='x unified'
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-    
-    def portfolio_simulation(self, stock_data):
-        """
-        Portfolio simulation and optimization
-        
-        Args:
-            stock_data (dict): Dictionary of stock DataFrames
-        """
-        st.subheader("Portfolio Simulation")
-        
-        # Portfolio allocation input
-        st.write("Portfolio Allocation")
-        portfolio_allocation = {}
-        for ticker in stock_data.keys():
-            allocation = st.number_input(f"{ticker} Allocation (%)", 
-                                         min_value=0.0, 
-                                         max_value=100.0, 
-                                         value=0.0,
-                                         step=1.0,
-                                         key=f"allocation_{ticker}")
-            portfolio_allocation[ticker] = allocation / 100
-        
-        # Validate total allocation
-        total_allocation = sum(portfolio_allocation.values())
-        if abs(total_allocation - 1.0) > 0.01:
-            st.warning(f"Total allocation must be 100%. Current allocation: {total_allocation*100:.2f}%")
-            return
-        
-        # Portfolio performance calculation
-        portfolio_returns = pd.DataFrame()
-        for ticker, weight in portfolio_allocation.items():
-            portfolio_returns[ticker] = stock_data[ticker]['Close'].pct_change() * weight
-        
-        portfolio_returns['Portfolio_Return'] = portfolio_returns.sum(axis=1)
-        cumulative_portfolio_return = (1 + portfolio_returns['Portfolio_Return']).cumprod() * 100 - 100
-        
-        # Portfolio performance plot
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=cumulative_portfolio_return.index, 
-            y=cumulative_portfolio_return.values, 
-            mode='lines', 
-            name='Portfolio Cumulative Return'
-        ))
-        
-        fig.update_layout(
-            title='Portfolio Cumulative Performance',
-            xaxis_title='Date',
-            yaxis_title='Cumulative Return (%)'
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Portfolio statistics
-        st.subheader("Portfolio Statistics")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Total Return", f"{cumulative_portfolio_return.iloc[-1]:.2f}%")
-        
-        with col2:
-            annual_volatility = portfolio_returns['Portfolio_Return'].std() * np.sqrt(252) * 100
-            st.metric("Annual Volatility", f"{annual_volatility:.2f}%")
-        
-        with col3:
-            sharpe_ratio = (portfolio_returns['Portfolio_Return'].mean() * 252) / (portfolio_returns['Portfolio_Return'].std() * np.sqrt(252))
-            st.metric("Sharpe Ratio", f"{sharpe_ratio:.2f}")
-    
-    def technical_indicators(self, stock_data):
-        """
-        Display technical indicators for selected stocks
-        
-        Args:
-            stock_data (dict): Dictionary of stock DataFrames
-        """
-        st.subheader("Technical Indicators")
-        
-        # Select stock for detailed analysis
-        selected_ticker = st.selectbox("Select Stock for Technical Analysis", 
-                                       list(stock_data.keys()))
-        
-        # Create subplots for different indicators
-        fig = go.Figure()
-        
-        # Candlestick chart
-        fig.add_trace(go.Candlestick(
-            x=stock_data[selected_ticker].index,
-            open=stock_data[selected_ticker]['Open'],
-            high=stock_data[selected_ticker]['High'],
-            low=stock_data[selected_ticker]['Low'],
-            close=stock_data[selected_ticker]['Close'],
-            name='Price'
-        ))
-        
-        # Bollinger Bands
-        fig.add_trace(go.Scatter(
-            x=stock_data[selected_ticker].index,
-            y=stock_data[selected_ticker]['Bollinger_High'],
-            mode='lines',
-            name='Bollinger High',
-            line=dict(color='rgba(173, 216, 230, 0.5)')
-        ))
-        
-        fig.add_trace(go.Scatter(
-            x=stock_data[selected_ticker].index,
-            y=stock_data[selected_ticker]['Bollinger_Low'],
-            mode='lines',
-            name='Bollinger Low',
-            line=dict(color='rgba(173, 216, 230, 0.5)')
-        ))
-        
-        fig.update_layout(
-            title=f'{selected_ticker} Technical Analysis',
-            xaxis_title='Date',
-            yaxis_title='Price',
-            xaxis_rangeslider_visible=False
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # RSI and MACD in separate columns
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("RSI Indicator")
-            fig_rsi = go.Figure()
-            fig_rsi.add_trace(go.Scatter(
-                x=stock_data[selected_ticker].index,
-                y=stock_data[selected_ticker]['RSI'],
-                mode='lines',
-                name='RSI'
-            ))
-            fig_rsi.add_hline(y=70, line_color='red', line_dash='dash')
-            fig_rsi.add_hline(y=30, line_color='green', line_dash='dash')
-            fig_rsi.update_layout(title='Relative Strength Index (RSI)')
-            st.plotly_chart(fig_rsi, use_container_width=True)
-        
-        with col2:
-            st.subheader("MACD Indicator")
-            fig_macd = go.Figure()
-            fig_macd.add_trace(go.Scatter(
-                x=stock_data[selected_ticker].index,
-                y=stock_data[selected_ticker]['MACD'],
-                mode='lines',
-                name='MACD'
-            ))
-            fig_macd.update_layout(title='Moving Average Convergence Divergence')
-            st.plotly_chart(fig_macd, use_container_width=True)
-    
-    def main(self):
-        """
-        Main application logic
-        """
-        st.title("📈 Stock Market Performance Dashboard")
-        
-        # Sidebar for user inputs
-        with st.sidebar:
-            st.header("Dashboard Configuration")
-            
-            # Default tickers
-            default_tickers = ['AAPL', 'GOOGL', 'MSFT', 'AMZN']
-            tickers = st.multiselect("Select Stocks", 
-                                     options=default_tickers,
-                                     default=default_tickers[:2])
-            
-            # Date range selection
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=365)
-            
-            date_range = st.date_input("Select Date Range", 
-                                       value=[start_date, end_date])
-            
-            if len(date_range) == 2:
-                start_date, end_date = date_range
-            
-            # Fetch stock data
-            stock_data = {}
-            valid_tickers = []
-            for ticker in tickers:
-                try:
-                    # Fetch data for each ticker individually
-                    ticker_data = self.fetch_stock_data([ticker], start_date, end_date)
-                    if ticker_data and not ticker_data[ticker].empty:
-                        stock_data[ticker] = ticker_data[ticker]
-                        valid_tickers.append(ticker)
-                except Exception as e:
-                    st.error(f"Error processing {ticker}: {e}")
-            
-            # Check if we have any valid stock data
-            if not stock_data:
-                st.error("No stock data available. Please select valid tickers.")
-                return
-            
-            # Warn about any tickers that couldn't be processed
-            if len(valid_tickers) < len(tickers):
-                invalid_tickers = set(tickers) - set(valid_tickers)
-                st.warning(f"Could not fetch data for: {', '.join(invalid_tickers)}")
-        
-        # Dashboard tabs
-        tab1, tab2, tab3 = st.tabs([
-            "Performance Comparison", 
-            "Portfolio Simulation", 
-            "Technical Indicators"
-        ])
-        
-        with tab1:
-            self.plot_stock_performance(stock_data)
-        
-        with tab2:
-            self.portfolio_simulation(stock_data)
-        
-        with tab3:
-            self.technical_indicators(stock_data)
+import plotly.graph_objects as go
 
-# Streamlit app entry point
-def run_dashboard():
-    dashboard = StockMarketDashboard()
-    dashboard.main()
+# Page configuration
+st.set_page_config(page_title="Stock Market Dashboard", layout="wide")
+st.title("Stock Market Performance Dashboard")
 
-if __name__ == "__main__":
-    run_dashboard()
+# Sidebar
+st.sidebar.header("Dashboard Settings")
+
+# Date range selection
+start_date = st.sidebar.date_input("Start Date", datetime.now() - timedelta(days=365))
+end_date = st.sidebar.date_input("End Date", datetime.now())
+
+# Stock selection
+default_stocks = ["AAPL", "GOOGL", "MSFT", "AMZN"]
+stocks = st.sidebar.multiselect("Select stocks to compare", default_stocks, default=default_stocks)
+
+# Technical indicators
+technical_indicators = st.sidebar.multiselect(
+    "Select Technical Indicators",
+    ["SMA", "EMA", "RSI", "MACD"],
+    default=["SMA"]
+)
+
+# Function to get stock data
+@st.cache_data
+def get_stock_data(symbol, start, end):
+    stock = yf.Ticker(symbol)
+    df = stock.history(start=start, end=end)
+    return df
+
+# Function to calculate technical indicators
+def calculate_indicators(df):
+    if "SMA" in technical_indicators:
+        df["SMA20"] = df["Close"].rolling(window=20).mean()
+        df["SMA50"] = df["Close"].rolling(window=50).mean()
+    
+    if "EMA" in technical_indicators:
+        df["EMA20"] = df["Close"].ewm(span=20).mean()
+    
+    if "RSI" in technical_indicators:
+        delta = df["Close"].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df["RSI"] = 100 - (100 / (1 + rs))
+    
+    return df
+
+# Main content
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    # Price comparison chart
+    st.subheader("Stock Price Comparison")
+    fig = go.Figure()
+    
+    for symbol in stocks:
+        df = get_stock_data(symbol, start_date, end_date)
+        df = calculate_indicators(df)
+        
+        # Plot stock price
+        fig.add_trace(go.Scatter(x=df.index, y=df["Close"],
+                                name=symbol, mode="lines"))
+        
+        # Plot technical indicators
+        if "SMA" in technical_indicators:
+            fig.add_trace(go.Scatter(x=df.index, y=df["SMA20"],
+                                   name=f"{symbol} SMA20", line=dict(dash="dash")))
+    
+    fig.update_layout(
+        xaxis_title="Date",
+        yaxis_title="Price",
+        height=600,
+        showlegend=True
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+with col2:
+    # Performance metrics
+    st.subheader("Performance Metrics")
+    
+    for symbol in stocks:
+        df = get_stock_data(symbol, start_date, end_date)
+        
+        # Calculate metrics
+        total_return = ((df["Close"][-1] - df["Close"][0]) / df["Close"][0]) * 100
+        daily_returns = df["Close"].pct_change()
+        volatility = daily_returns.std() * np.sqrt(252) * 100
+        
+        # Display metrics
+        st.write(f"**{symbol}**")
+        st.write(f"Total Return: {total_return:.2f}%")
+        st.write(f"Volatility: {volatility:.2f}%")
+        st.write("---")
+
+# Portfolio Simulation
+st.subheader("Portfolio Simulation")
+investment_amount = st.number_input("Enter investment amount ($)", value=10000)
+
+if st.button("Simulate Portfolio"):
+    portfolio_values = pd.DataFrame()
+    
+    for symbol in stocks:
+        df = get_stock_data(symbol, start_date, end_date)
+        shares = investment_amount / len(stocks) / df["Close"][0]
+        portfolio_values[symbol] = df["Close"] * shares
+    
+    portfolio_values["Total"] = portfolio_values.sum(axis=1)
+    
+    # Plot portfolio value
+    fig_portfolio = go.Figure()
+    fig_portfolio.add_trace(go.Scatter(x=portfolio_values.index, 
+                                     y=portfolio_values["Total"],
+                                     name="Portfolio Value"))
+    
+    fig_portfolio.update_layout(
+        xaxis_title="Date",
+        yaxis_title="Portfolio Value ($)",
+        height=400
+    )
+    st.plotly_chart(fig_portfolio, use_container_width=True)
+    
+    # Calculate portfolio metrics
+    portfolio_return = ((portfolio_values["Total"][-1] - investment_amount) / 
+                       investment_amount) * 100
+    st.write(f"Portfolio Return: {portfolio_return:.2f}%")
+    st.write(f"Final Portfolio Value: ${portfolio_values['Total'][-1]:.2f}")
+
+# Add data refresh button
+if st.button("Refresh Data"):
+    st.experimental_rerun()
