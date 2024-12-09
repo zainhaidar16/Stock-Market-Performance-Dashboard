@@ -33,13 +33,22 @@ class StockMarketDashboard:
         stock_data = {}
         for ticker in tickers:
             try:
-                df = yf.download(ticker, start=start_date, end=end_date)
+                # Fetch data with a specific interval to ensure proper data retrieval
+                df = yf.download(ticker, start=start_date, end=end_date, progress=False)
+                
+                # Ensure Close column is 1-dimensional
+                if isinstance(df['Close'], pd.DataFrame):
+                    df['Close'] = df['Close'].squeeze()
                 
                 # Calculate technical indicators
-                df['RSI'] = ta.momentum.RSIIndicator(df['Close']).rsi()
-                df['MACD'] = ta.trend.MACD(df['Close']).macd()
-                df['Bollinger_High'] = ta.volatility.BollingerBands(df['Close']).bollinger_hband()
-                df['Bollinger_Low'] = ta.volatility.BollingerBands(df['Close']).bollinger_lband()
+                rsi_indicator = ta.momentum.RSIIndicator(df['Close'])
+                macd_indicator = ta.trend.MACD(df['Close'])
+                bollinger = ta.volatility.BollingerBands(df['Close'])
+                
+                df['RSI'] = rsi_indicator.rsi()
+                df['MACD'] = macd_indicator.macd()
+                df['Bollinger_High'] = bollinger.bollinger_hband()
+                df['Bollinger_Low'] = bollinger.bollinger_lband()
                 
                 stock_data[ticker] = df
             except Exception as e:
@@ -259,11 +268,27 @@ class StockMarketDashboard:
                 start_date, end_date = date_range
             
             # Fetch stock data
-            stock_data = self.fetch_stock_data(tickers, start_date, end_date)
+            stock_data = {}
+            valid_tickers = []
+            for ticker in tickers:
+                try:
+                    # Fetch data for each ticker individually
+                    ticker_data = self.fetch_stock_data([ticker], start_date, end_date)
+                    if ticker_data and not ticker_data[ticker].empty:
+                        stock_data[ticker] = ticker_data[ticker]
+                        valid_tickers.append(ticker)
+                except Exception as e:
+                    st.error(f"Error processing {ticker}: {e}")
             
+            # Check if we have any valid stock data
             if not stock_data:
                 st.error("No stock data available. Please select valid tickers.")
                 return
+            
+            # Warn about any tickers that couldn't be processed
+            if len(valid_tickers) < len(tickers):
+                invalid_tickers = set(tickers) - set(valid_tickers)
+                st.warning(f"Could not fetch data for: {', '.join(invalid_tickers)}")
         
         # Dashboard tabs
         tab1, tab2, tab3 = st.tabs([
